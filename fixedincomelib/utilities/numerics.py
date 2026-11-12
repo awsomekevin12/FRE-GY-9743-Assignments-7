@@ -140,13 +140,50 @@ class Interpolator1DMonotoneConvex(Interpolator1D):
                  extrapolation_method: ExtrapMethod) -> None:
         super().__init__(axis1, values, InterpMethod.MONOTONE_CONVEX,
                          extrapolation_method)
-        # TODO: Prepare your interpolation method.
+        assert self.extrap_method_ == ExtrapMethod.FLAT
+        self.x_ = np.asarray(axis1, dtype=float)
+        self.f_ = np.asarray(values, dtype=float)
+        if self.length_ < 2:
+            self.cum_ = np.zeros(1)
+            return
+        h = np.diff(self.x_)
+        d = np.diff(self.f_)
+        m = d / h
+        s = np.empty(self.length_)
+        s[0], s[-1] = m[0], m[-1]
+        s[1:-1] = (h[1:] * m[:-1] + h[:-1] * m[1:]) / (h[:-1] + h[1:])
+        with np.errstate(divide='ignore', invalid='ignore'):
+            a = 1.0 + (s[:-1] - s[1:]) / (2.0 * m)
+        a = np.where(d > 0, np.clip(a, 0.0, 1.0), np.where(d < 0, np.clip(a, 1.0, 2.0), 1.0))
+        self.h_, self.d_, self.a_ = h, d, a
+        piece_integrals = h * (self.f_[:-1] + d * (a / 2.0 + (1.0 - a) / 3.0))
+        self.cum_ = np.concatenate(([0.0], np.cumsum(piece_integrals)))
+
+    def _locate(self, x: float):
+        i = min(max(int(np.searchsorted(self.x_, x, side='right')) - 1, 0), self.length_ - 2)
+        return i, (x - self.x_[i]) / self.h_[i]
+
+    def _antiderivative(self, x: float) -> float:
+        if x <= self.x_[0]:
+            return (x - self.x_[0]) * self.f_[0]
+        if x >= self.x_[-1]:
+            return self.cum_[-1] + (x - self.x_[-1]) * self.f_[-1]
+        i, u = self._locate(x)
+        a = self.a_[i]
+        return self.cum_[i] + self.h_[i] * u * (
+            self.f_[i] + self.d_[i] * (a * u / 2.0 + (1.0 - a) * u * u / 3.0))
 
     def interpolate(self, x: float) -> float:
-        raise NotImplementedError("HW7: implement interpolate")
+        if x <= self.x_[0]:
+            return float(self.f_[0])
+        if x >= self.x_[-1]:
+            return float(self.f_[-1])
+        i, u = self._locate(x)
+        a = self.a_[i]
+        return float(self.f_[i] + self.d_[i] * (a * u + (1.0 - a) * u * u))
 
     def integrate(self, start_x: float, end_x: float) -> float:
-        raise NotImplementedError("HW7: implement integrate")
+        return float(self._antiderivative(end_x) - self._antiderivative(start_x))
 
     # Optional risk interface
     # The test cells for risk are not prepared but you can do it by your own.
